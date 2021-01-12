@@ -10,6 +10,7 @@ from airflow.models import Variable
 from airflow.contrib.operators.kubernetes_pod_operator import KubernetesPodOperator
 from airflow.models import BaseOperator
 from airflow.operators.python_operator import PythonOperator
+from airflow.operators.subdag_operator import SubDagOperator
 from airflow.utils.module_loading import import_string
 from airflow import __version__ as AIRFLOW_VERSION
 
@@ -30,7 +31,7 @@ from kubernetes.client.models import V1Pod, V1Container
 from packaging import version
 
 from dagfactory import utils
-
+from dagfactory.model.dag_build_context import DagBuildContext
 
 # these are params only used in the DAG factory, not in the tasks
 SYSTEM_PARAMS: List[str] = ["operator", "dependencies"]
@@ -47,11 +48,16 @@ class DagBuilder:
     """
 
     def __init__(
-        self, dag_name: str, dag_config: Dict[str, Any], default_config: Dict[str, Any]
+        self,
+        dag_name: str,
+        dag_config: Dict[str, Any],
+        default_config: Dict[str, Any],
+        build_context: DagBuildContext = None,
     ) -> None:
         self.dag_name: str = dag_name
         self.dag_config: Dict[str, Any] = dag_config
         self.default_config: Dict[str, Any] = default_config
+        self.build_context = build_context if build_context else DagBuildContext()
 
     def get_dag_params(self) -> Dict[str, Any]:
         """
@@ -114,8 +120,7 @@ class DagBuilder:
             raise f"{self.dag_name} config is missing start_date" from err
         return dag_params
 
-    @staticmethod
-    def make_task(operator: str, task_params: Dict[str, Any]) -> BaseOperator:
+    def make_task(self, operator: str, task_params: Dict[str, Any]) -> BaseOperator:
         """
         Takes an operator and params and creates an instance of that operator.
 
@@ -185,6 +190,16 @@ class DagBuilder:
                     if task_params.get("init_containers") is not None
                     else None
                 )
+
+            # SubDagOperator
+            if operator_obj == SubDagOperator:
+                sub_dag_id = task_params["dag"].dag_id + "." + task_params["task_id"]
+                sub_dag = self.build_context.find_dag(sub_dag_id)
+                if not sub_dag:
+                    raise Exception(
+                        f"Failed to find subdag defination for: {sub_dag_id}"
+                    )
+                task_params["subdag"] = sub_dag
 
             if utils.check_dict_key(task_params, "execution_timeout_secs"):
                 task_params["execution_timeout"]: timedelta = timedelta(
@@ -299,9 +314,7 @@ class DagBuilder:
             params: Dict[str, Any] = {
                 k: v for k, v in task_conf.items() if k not in SYSTEM_PARAMS
             }
-            task: BaseOperator = DagBuilder.make_task(
-                operator=operator, task_params=params
-            )
+            task: BaseOperator = self.make_task(operator=operator, task_params=params)
             tasks_dict[task.task_id]: BaseOperator = task
 
         # set task dependencies after creating tasks
@@ -311,5 +324,8 @@ class DagBuilder:
                 for dep in task_conf["dependencies"]:
                     dep_task: BaseOperator = tasks_dict[dep]
                     source_task.set_upstream(dep_task)
+
+        # add a property to mark whether this dag is a sub_dag or not
+        dag.is_subdag = dag_params.get("is_subdag", False)
 
         return {"dag_id": dag_params["dag_id"], "dag": dag}

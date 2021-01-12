@@ -22,6 +22,7 @@ RUN set -ex \
     freetds-bin \
     build-essential \
     python3-pip \
+    sqlite3 libsqlite3-dev \
     && useradd -ms /bin/bash -d ${AIRFLOW_HOME} airflow \
     && pip install -U pip setuptools wheel \
     && apt-get clean \

@@ -9,5 +9,7 @@ airflow users create  --username admin \
           --role Admin \
           --email admin@example.org \
           -p admin
+# for sample subdag
+airflow pools set subdag_pool 124 "Subdag pool"
 
 airflow scheduler & exec airflow webserver

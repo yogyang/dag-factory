@@ -2,6 +2,7 @@ import os
 import datetime
 import pytest
 from airflow.models.variable import Variable
+from airflow.operators.subdag_operator import SubDagOperator
 from packaging import version
 from airflow import __version__ as AIRFLOW_VERSION
 
@@ -14,20 +15,23 @@ INVALID_YAML = os.path.join(here, "fixtures/invalid_yaml.yml")
 INVALID_DAG_FACTORY = os.path.join(here, "fixtures/invalid_dag_factory.yml")
 DAG_FACTORY_KUBERNETES_POD_OPERATOR = os.path.join(here, "fixtures/dag_factory_kubernetes_pod_operator.yml")
 DAG_FACTORY_VARIABLES_AS_ARGUMENTS = os.path.join(here, "fixtures/dag_factory_variables_as_arguments.yml")
+DAG_FACTORY_SUB_DAG = os.path.join(here, "fixtures/dag_factory_sub_dag.yml")
 
 DOC_MD_FIXTURE_FILE = os.path.join(here, "fixtures/mydocfile.md")
 DOC_MD_PYTHON_CALLABLE_FILE = os.path.join(here, "fixtures/doc_md_builder.py")
 
+
 @pytest.fixture(autouse=True)
 def build_path_for_doc_md():
-    with open(TEST_DAG_FACTORY,'r') as f:
+    with open(TEST_DAG_FACTORY, 'r') as f:
         oldText = f.read()
         newText = oldText.replace('{here}', here)
-    with open(TEST_DAG_FACTORY,'w') as f:
+    with open(TEST_DAG_FACTORY, 'w') as f:
         f.write(newText)
     yield
-    with open(TEST_DAG_FACTORY,'w') as f:
+    with open(TEST_DAG_FACTORY, 'w') as f:
         f.write(oldText)
+
 
 def test_validate_config_filepath_valid():
     dagfactory.DagFactory._validate_config_filepath(TEST_DAG_FACTORY)
@@ -78,7 +82,7 @@ def test_load_config_valid():
             },
         },
         "example_dag2": {
-            "doc_md_file_path" : DOC_MD_FIXTURE_FILE,
+            "doc_md_file_path": DOC_MD_FIXTURE_FILE,
             "tasks": {
                 "task_1": {
                     "operator": "airflow.operators.bash_operator.BashOperator",
@@ -97,7 +101,7 @@ def test_load_config_valid():
             }
         },
         "example_dag3": {
-            "doc_md_python_callable_name" : "mydocmdbuilder",
+            "doc_md_python_callable_name": "mydocmdbuilder",
             "doc_md_python_callable_file": DOC_MD_PYTHON_CALLABLE_FILE,
             "doc_md_python_arguments": {"arg1": "arg1", "arg2": "arg2"},
             "tasks": {
@@ -209,6 +213,7 @@ def test_generate_dags_valid():
     assert "example_dag2" in globals()
     assert "fake_example_dag" not in globals()
 
+
 def test_generate_dags_with_removal_valid():
     td = dagfactory.DagFactory(TEST_DAG_FACTORY)
     td.generate_dags(globals())
@@ -223,22 +228,25 @@ def test_generate_dags_with_removal_valid():
     assert "example_dag2" not in globals()
     assert "fake_example_dag" not in globals()
 
+
 def test_generate_dags_invalid():
     td = dagfactory.DagFactory(INVALID_DAG_FACTORY)
     with pytest.raises(Exception):
         td.generate_dags(globals())
+
 
 def test_kubernetes_pod_operator_dag():
     td = dagfactory.DagFactory(DAG_FACTORY_KUBERNETES_POD_OPERATOR)
     td.generate_dags(globals())
     assert "example_dag" in globals()
 
+
 def test_variables_as_arguments_dag():
     override_command = 'value_from_variable'
     if version.parse(AIRFLOW_VERSION) >= version.parse("1.10.10"):
         os.environ['AIRFLOW_VAR_VAR1'] = override_command
     else:
-        Variable.set("var1",override_command)
+        Variable.set("var1", override_command)
     td = dagfactory.DagFactory(DAG_FACTORY_VARIABLES_AS_ARGUMENTS)
     td.generate_dags(globals())
     tasks = globals()['example_dag'].tasks
@@ -246,16 +254,29 @@ def test_variables_as_arguments_dag():
         if task.task_id == "task_3":
             assert task.bash_command == override_command
 
+
 def test_doc_md_file_path():
     td = dagfactory.DagFactory(TEST_DAG_FACTORY)
     td.generate_dags(globals())
     generated_doc_md = globals()['example_dag2'].doc_md
-    with open(DOC_MD_FIXTURE_FILE,"r") as file:
+    with open(DOC_MD_FIXTURE_FILE, "r") as file:
         expected_doc_md = file.read()
     assert generated_doc_md == expected_doc_md
+
 
 def test_doc_md_callable():
     td = dagfactory.DagFactory(TEST_DAG_FACTORY)
     td.generate_dags(globals())
     expected_doc_md = globals()['example_dag3'].doc_md
     assert str(td.get_dag_configs()['example_dag3']['doc_md_python_arguments']) == expected_doc_md
+
+
+def test_sub_dag():
+    td = dagfactory.DagFactory(DAG_FACTORY_SUB_DAG)
+    td.generate_dags(globals())
+    tasks = globals()['example_sub_dag'].tasks
+    for task in tasks:
+        if task.task_id == "inner_sub_dag":
+            assert isinstance(task, SubDagOperator)
+            assert len(task.subdag.tasks) == 2
+            assert task.pool == "subdag_pool"

@@ -1,0 +1,37 @@
+default:
+  default_args:
+    owner: "default_owner"
+    start_date: 2 days
+    retries: 1
+    retry_delay_sec: 300
+  concurrency: 1
+  max_active_runs: 1
+  dagrun_timeout_sec: 600
+  default_view: "tree"
+  orientation: "LR"
+  schedule_interval: "0 1 * * *"
+
+
+# subdag go first
+example_sub_dag.inner_sub_dag:
+  description: "this is an inner sub dag"
+  is_subdag: True
+  tasks:
+    inner_task:
+      operator: airflow.operators.bash_operator.BashOperator
+      bash_command: "echo 1"
+    end:
+      operator: airflow.operators.dummy_operator.DummyOperator
+      dependencies:
+        - inner_task
+
+example_sub_dag:
+  description: "this is an parent dag containing sub dag test"
+  tasks:
+    begin:
+      operator: airflow.operators.dummy_operator.DummyOperator
+    inner_sub_dag:
+      operator: airflow.operators.subdag_operator.SubDagOperator
+      pool: subdag_pool
+      dependencies:
+        - begin
